@@ -1,0 +1,98 @@
+---
+title: "CHIP-Seq Analysis on Two Encode Datasets"
+author: Jacquelyn Johnson
+date: 07/09/2023
+output: html_document
+---
+# Set up
+## Load Libraries
+```{r}
+library(GenomicRanges)
+library(rtracklayer)
+library(IRanges)
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+#library(Gviz)
+#library(clusterProfiler)
+```
+
+
+## Get Datasets (ZNF235, ZNF546)
+```{r}
+#Targets: ZNF235, ZNF546
+peaks.235 <- import("datasets/ENCFF321MWB.bed", format = "narrowPeak")
+peaks.546 <- import("datasets/ENCFF455TXX.bed", format = "narrowPeak")
+
+files <- list(peaks.235,peaks.546)
+names(files) <- c("ZNF235","ZNF546")
+```
+
+# Data Analysis
+## 1. Venn Diagram comparing the overlap of binding sites for two ChIP-Seq datasets
+```{r}
+library(VennDiagram)
+
+
+ovlp = findOverlaps( peaks.235, peaks.546 )
+ovlp
+ov = min( length(unique( queryHits(ovlp) )), length(unique( subjectHits(ovlp) ) ) )
+draw.pairwise.venn( 
+   area1=length(peaks.235),
+   area2=length(peaks.546), 
+   cross.area=ov, 
+   category=c("ZNF235", "ZNF546"), 
+   fill=c("steelblue", "blue3"), 
+   cat.cex=0.7)
+```
+
+## 2. Metaplot of two datasets around the TSS (Transcription Start Site)
+```{r}
+enriched.regions = Reduce(subsetByOverlaps, list(peaks.235, peaks.546))
+promoter <- getPromoters(TxDb=txdb, upstream=3000, downstream=3000)
+tagMatrixList <- lapply(files, getTagMatrix, windows=promoter)
+plotAvgProf(tagMatrixList, xlim=c(-3000, 3000),
+            xlab="Genomic Region (5'->3')", ylab = "Read Count Frequency")
+```
+
+
+
+
+
+# 3. Annotate the peaks and compare datasets
+```{r}
+peakAnnoList <- lapply(files, annotatePeak, TxDb=txdb,
+                       tssRegion=c(-3000, 3000), verbose=FALSE)
+plotAnnoBar(peakAnnoList)
+plotDistToTSS(peakAnnoList)
+
+# ensdb
+peakAnnoList <- lapply(files, annotatePeak, TxDb=txdb,
+                       tssRegion=c(-3000, 3000), verbose=FALSE)
+```
+
+# 4. Assign peaks to genes and perform pathway enrichment
+```{r}
+genes = lapply(peakAnnoList, function(i) as.data.frame(i)$geneId)
+names(genes) = sub("_", "\n", names(genes))
+
+# did not have "enriched genes" until running:
+# bitr_kegg(gene, fromType = "kegg", toType = "Module", organism = "hsa")
+compKEGG <- compareCluster(geneCluster   = genes,
+                         fun           = "enrichKEGG",
+                         pvalueCutoff  = 0.01,
+                         pAdjustMethod = "BH")
+dotplot(compKEGG, showCategory = 15, title = "KEGG Pathway Enrichment Analysis", includeAll = TRUE)
+
+
+```
+
+# 6. What genes and pathways/genesets shared between these datasets? What pathways differ? What is your interpretation of these results? What future directions could you propose to follow up on these findings? (No right answers to these questions, just important to think through this part).
+
+## The two datasets share the pathways "Fluid shear stress and atherosclerosis" and the "Hippo signalling pathway" when the p values are limited to .01. ZNF546 has more binding sites as a whole and additionally more pathways that are associated with it from the KEGG pathway analysis when compared to ZNF235. According to NCBI, ZNF235 was not highly expressed in any tissues whereas ZNF546 was highly expressed in the testis.
+
+
+
+
+

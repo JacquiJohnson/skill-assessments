@@ -1,0 +1,144 @@
+# RNA-seq Analysis
+
+## Load data
+```{r}
+suppressMessages(library("DESeq2"))
+suppressMessages(library("dplyr"))
+suppressMessages(library("EnhancedVolcano"))
+suppressMessages(library("pheatmap"))
+suppressMessages(library("org.Hs.eg.db"))
+suppressMessages(library("AnnotationDbi"))
+
+rse <- readRDS("EwS.rds")
+```
+
+## Pre-filtering
+```{r}
+# set design to 'condition'
+# condition: shCTR (control), shEF1 (EWSR1-FLI1 knock-down)
+dds <- DESeqDataSet(rse, design = ~ condition)
+
+# DESeq fits (linear) negative binomial distribution model (estimates 2 parameters: size factor, dispersion)
+dds <- DESeq(dds)
+
+# Remove counts < 10
+nrow(dds)
+keep <- rowSums(counts(dds)) > 10
+dds <- dds[keep,]
+nrow(dds)
+```
+
+
+## 1. PCA summarizing the sample-level variance within the data set.
+```{r}
+rse_transform <- DESeqTransform(rse)
+plotPCA(rse_transform)
+
+rld <- rlog(dds)
+plotPCA(rld)
+```
+
+## 2. MA Plot showing the relationship between mean count and log2 fold change.
+```{r}
+res <- results(dds) # cooks cutoff/independent filtering parameters default to TRUE
+
+# MA plot
+plotMA(res)
+
+# filter to display DEGs with p adjusted < 0.001
+res_filtered <- res %>% 
+  as.data.frame() %>%
+  filter(padj < 0.001)
+
+
+```
+
+## 3. Table listing the differentially-expressed genes (DEGs) (p adjusted set to 0.001)
+```{r}
+# display interactive table
+suppressMessages(DT::datatable(res_filtered))
+```
+
+## 4. Volcano plot showing all DGE results.
+```{r}
+EnhancedVolcano(toptable = res,
+                x = "log2FoldChange",
+                y = "padj",
+                labSize = 4,
+                xlim = c(-15, +15),
+                lab = rownames(res)
+                )
+
+# volano with gene names
+EnhancedVolcano(toptable = res_anno_nodup,
+                x = "log2FoldChange",
+                y = "padj",
+                labSize = 4,
+                xlim = c(-15, +15),
+                lab = rownames(res_anno_nodup)
+                )
+```
+
+## 5. Heatmap showing the top 10 over- and under-expressed DEGs.
+```{r}
+# annotations
+resultsSig <- anno_res
+
+# heatmap of all DE genes (rld <- rlog(dds))
+# assay gets matrix of 
+mat <- assay(rld)
+rownames(mat) <- sub("\\..*", "", rownames(mat))
+#idx <- results$read_count_as_reported_by_sra
+mat_df <- as.data.frame(mat)
+
+##### add gene annotation to results ####
+rownames_res_cleaned <- sub("\\..*", "", rownames(res))
+rownames(res) <- rownames_res_cleaned
+
+res_anno <- AnnotationDbi::select(org.Hs.eg.db, rownames(res),
+                                  columns = c("ENSEMBL","ENTREZID","SYMBOL","GENENAME"),
+                                  keytype = "ENSEMBL")
+# remove duplicates
+res_anno_nodup <- res_anno %>%
+  group_by(ENSEMBL) %>%
+  filter(row_number()==1)
+
+#########################################
+
+# change 'res' used
+res_final <- res0.01
+res_final <- res_filtered
+res_final <- res
+
+#applied example
+#get 20 over/under expressed genes
+select20 <- as.data.frame(res_final) %>%
+  filter(pvalue != 'NA') %>%
+  arrange(log2FoldChange) %>%
+  slice(c(1:10, (n()-9):n()))
+
+#reduce rld assay to top 20
+select20_rld <- as.data.frame(mat) %>%
+  filter(rownames(mat) %in% rownames(select20))
+
+df <- as.data.frame(colData(dds)["condition"])
+
+pheatmap(select20_mat, cluster_rows=FALSE, show_rownames=FALSE,
+         cluster_cols=FALSE, annotation_col=df)
+
+
+
+
+#example
+ntd <- normTransform(dds)
+xselect <- order(rowMeans(counts(dds,normalized=TRUE)),
+                decreasing=TRUE)[1:20]
+
+xdf <- as.data.frame(colData(dds)["condition"])
+#rownames(xdf) <- rownames(dds)
+
+pheatmap(assay(rld)[xselect,], cluster_rows=FALSE, show_rownames=FALSE,
+         cluster_cols=FALSE, annotation_col=xdf)
+
+```
+
